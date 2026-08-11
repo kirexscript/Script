@@ -1,0 +1,276 @@
+-- FTAP Rocket Control FIXED для Delta
+-- Устанавливаем Orion вручную, если не загружается
+
+local OrionLoaded = false
+local function LoadOrion()
+    if not game:IsLoaded() then game.Loaded:Wait() end
+    local success, result = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/OrionLibrary.lua"))()
+    end)
+    if success and result then
+        OrionLoaded = true
+        return result
+    else
+        -- Альтернативный источник Orion
+        local success2, result2 = pcall(function()
+            return loadstring(game:HttpGet("https://pastebin.com/raw/8YvJYLnK"))()
+        end)
+        if success2 and result2 then
+            OrionLoaded = true
+            return result2
+        else
+            -- Создаём минимальное меню вручную, если Orion недоступен
+            return nil
+        end
+    end
+end
+
+local Orion = LoadOrion()
+
+-- Если Orion не загрузился, создаём упрощённое меню через ScreenGui
+if not Orion then
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "FTAP_Menu"
+    gui.Parent = game.Players.LocalPlayer.PlayerGui
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.4, 0, 0.6, 0)
+    frame.Position = UDim2.new(0.3, 0, 0.2, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0.15, 0)
+    title.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    title.Text = "FTAP Rocket Control"
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Parent = frame
+    
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0.9, 0, 0.15, 0)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0.2, 0)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 100)
+    toggleBtn.Text = "Enable Control"
+    toggleBtn.TextColor3 = Color3.new(1,1,1)
+    toggleBtn.Parent = frame
+    
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, 0, 0.15, 0)
+    statusLabel.Position = UDim2.new(0, 0, 0.4, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "Status: Waiting..."
+    statusLabel.TextColor3 = Color3.new(0.8,0.8,1)
+    statusLabel.Parent = frame
+    
+    local function notify(text)
+        statusLabel.Text = "Status: " .. text
+    end
+    
+    -- Подмена Orion функций
+    Orion = {
+        MakeNotification = function(opt)
+            statusLabel.Text = "Notice: " .. (opt.Content or "")
+        end,
+        MakeWindow = function() return { MakeTab = function() return { AddToggle = function() end, AddButton = function() end, AddLabel = function() end } end } end
+    }
+    -- Переопределяем для работы с toggle
+    local controlState = false
+    toggleBtn.MouseButton1Click:Connect(function()
+        controlState = not controlState
+        toggleBtn.Text = controlState and "Disable Control" or "Enable Control"
+        if controlState then
+            notify("Searching for rocket...")
+            local r = findPlayerRocket()
+            if r then
+                controlledRocket = r
+                notify("Rocket locked: " .. r.Name)
+                setupCamera(r)
+            else
+                notify("No rocket found - fire one first")
+                controlState = false
+                toggleBtn.Text = "Enable Control"
+            end
+        else
+            controlledRocket = nil
+            Camera.CameraType = Enum.CameraType.Custom
+            notify("Control disabled")
+        end
+    end)
+else
+    -- Оригинальный код с Orion (упрощённый и починенный)
+    local Player = game.Players.LocalPlayer
+    local Camera = workspace.CurrentCamera
+    local controlledRocket = nil
+    local controlEnabled = false
+    
+    local function findPlayerRocket()
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") and (v.Name:lower():find("rocket") or v.Name:lower():find("missile") or v.Name:lower():find("bullet") or v:FindFirstChild("Handle")) then
+                local model = v:FindFirstAncestorOfClass("Model")
+                if model and not model:FindFirstChild("Humanoid") then
+                    local owner = v:GetNetworkOwner()
+                    if owner == Player then
+                        return v
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    
+    local function setupCamera(rocket)
+        Camera.CameraSubject = rocket
+        Camera.CameraType = Enum.CameraType.Scriptable
+        game:GetService("RunService").RenderStepped:Connect(function()
+            if controlledRocket and controlledRocket.Parent then
+                local offset = controlledRocket.CFrame:VectorToWorldSpace(Vector3.new(0, 3, -12))
+                local target = controlledRocket.Position
+                Camera.CFrame = CFrame.new(target + offset, target)
+            end
+        end)
+    end
+    
+    local function controlRocket(rocket, dir)
+        if not rocket or not rocket.Parent then return end
+        local vel = rocket.Velocity
+        if vel.Magnitude < 5 then return end
+        local right = rocket.CFrame.RightVector
+        local up = rocket.CFrame.UpVector
+        local impulse = (right * dir.X + up * dir.Y) * 200
+        rocket:ApplyImpulse(impulse)
+    end
+    
+    local Window = Orion:MakeWindow({
+        Name = "FTAP Rocket",
+        HidePremium = true,
+        SaveConfig = false,
+        IntroText = "Control ON"
+    })
+    
+    local Tab = Window:MakeTab({Name = "Main", Icon = "rbxassetid://4483345998"})
+    
+    local toggle = Tab:AddToggle({
+        Name = "Rocket Control",
+        Default = false,
+        Callback = function(val)
+            controlEnabled = val
+            if val then
+                local r = findPlayerRocket()
+                if r then
+                    controlledRocket = r
+                    setupCamera(r)
+                    Orion:MakeNotification({Name = "Success", Content = "Rocket found!", Time = 2})
+                else
+                    Orion:MakeNotification({Name = "Error", Content = "No rocket", Time = 2})
+                    toggle:Set(false)
+                end
+            else
+                controlledRocket = nil
+                Camera.CameraType = Enum.CameraType.Custom
+            end
+        end
+    })
+    
+    Tab:AddButton({
+        Name = "Find Rocket",
+        Callback = function()
+            local r = findPlayerRocket()
+            if r then
+                controlledRocket = r
+                if controlEnabled then setupCamera(r) end
+                Orion:MakeNotification({Name = "Locked", Content = r.Name, Time = 2})
+            else
+                Orion:MakeNotification({Name = "None", Content = "No rocket", Time = 2})
+            end
+        end
+    })
+    
+    -- Сенсорное управление (для планшета)
+    local joystickOn = false
+    Tab:AddToggle({
+        Name = "Touch Steering",
+        Default = false,
+        Callback = function(val)
+            joystickOn = val
+            if val then
+                local gui = Instance.new("ScreenGui")
+                gui.Name = "TouchCtrl"
+                gui.Parent = Player.PlayerGui
+                local bg = Instance.new("Frame")
+                bg.Size = UDim2.new(1,0,1,0)
+                bg.BackgroundTransparency = 1
+                bg.Parent = gui
+                local startPos = nil
+                bg.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.Touch then
+                        startPos = input.Position
+                    end
+                end)
+                bg.InputChanged:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.Touch and startPos and controlEnabled and controlledRocket then
+                        local delta = (input.Position - startPos) / 80
+                        local dir = Vector2.new(math.clamp(delta.X, -1, 1), math.clamp(delta.Y, -1, 1))
+                        if dir.Magnitude > 0.1 then
+                            controlRocket(controlledRocket, dir)
+                        end
+                    end
+                end)
+                bg.InputEnded:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.Touch then
+                        startPos = nil
+                    end
+                end)
+            else
+                local g = Player.PlayerGui:FindFirstChild("TouchCtrl")
+                if g then g:Destroy() end
+            end
+        end
+    })
+    
+    -- Клавиатура
+    game:GetService("UserInputService").InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if not controlEnabled or not controlledRocket then return end
+        local dir = Vector2.new(0,0)
+        if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.Up then dir = Vector2.new(0,1) end
+        if input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.Down then dir = Vector2.new(0,-1) end
+        if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then dir = Vector2.new(-1,0) end
+        if input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then dir = Vector2.new(1,0) end
+        if dir.Magnitude > 0 then
+            controlRocket(controlledRocket, dir)
+        end
+    end)
+    
+    -- Автообновление
+    game:GetService("RunService").Heartbeat:Connect(function()
+        if controlEnabled and (not controlledRocket or not controlledRocket.Parent) then
+            local new = findPlayerRocket()
+            if new then
+                controlledRocket = new
+                if controlEnabled then setupCamera(new) end
+            end
+        end
+    end)
+    
+    Orion:Init()
+end
+
+-- Универсальная функция поиска для обоих вариантов
+function findPlayerRocket()
+    local Player = game.Players.LocalPlayer
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v:IsA("BasePart") and (v.Name:lower():find("rocket") or v.Name:lower():find("missile") or v.Name:lower():find("projectile")) then
+            local model = v:FindFirstAncestorOfClass("Model")
+            if model and not model:FindFirstChild("Humanoid") then
+                local owner = pcall(function() return v:GetNetworkOwner() end)
+                if owner and owner == Player then
+                    return v
+                end
+            end
+        end
+    end
+    return nil
+end
+
+print("FTAP Rocket Script loaded successfully! Fire a rocket and enable control.")
